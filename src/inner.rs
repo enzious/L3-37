@@ -42,7 +42,7 @@
 
 use crossbeam_queue::SegQueue;
 use futures::channel::oneshot;
-use futures::lock::Mutex;
+use std::fmt;
 use std::sync::Arc;
 
 use crate::manage_connection::ManageConnection;
@@ -54,21 +54,31 @@ use crate::Error;
 /// futures that are waiting on connections.
 pub struct ConnectionPool<C: ManageConnection + Send> {
     /// Queue of connections in the pool
-    pub conns: Mutex<Arc<Queue<C::Connection>>>,
+    pub(crate) conns: Arc<Queue<C::Connection>>,
     /// Queue of oneshot's that are waiting to be given a new connection when the current pool is
     /// already saturated.
-    waiting: SegQueue<oneshot::Sender<Live<C::Connection>>>,
+    pub(crate) waiting: SegQueue<oneshot::Sender<Live<C::Connection>>>,
     /// Connection manager used to create new connections as needed
     manager: C,
     /// Configuration for the pool
-    config: Config,
+    config: Arc<Config>,
+}
+
+impl<C: ManageConnection + Send + fmt::Debug> fmt::Debug for ConnectionPool<C> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ConnectionPool")
+            .field("waiting_count", &self.waiting.len())
+            .field("manager", &self.manager)
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl<C: ManageConnection> ConnectionPool<C> {
     /// Creates a new connection pool
-    pub fn new(conns: Queue<C::Connection>, manager: C, config: Config) -> ConnectionPool<C> {
+    pub fn new(conns: Queue<C::Connection>, manager: C, config: Arc<Config>) -> ConnectionPool<C> {
         ConnectionPool {
-            conns: Mutex::new(Arc::new(conns)),
+            conns: Arc::new(conns),
             waiting: SegQueue::new(),
             manager,
             config,
@@ -93,6 +103,10 @@ impl<C: ManageConnection> ConnectionPool<C> {
         &self,
     ) -> Option<oneshot::Sender<Live<<C as ManageConnection>::Connection>>> {
         self.waiting.pop().ok()
+    }
+
+    pub async fn is_valid(&self, conn: &mut C::Connection) -> Result<(), Error<C::Error>> {
+        self.manager.is_valid(conn).await
     }
 
     pub fn has_broken(&self, conn: &mut Live<C::Connection>) -> bool {

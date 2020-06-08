@@ -1,14 +1,19 @@
 [package]
 name = "l337-redis"
-version = "0.1.0"
+version = "0.4.0"
 authors = ["Jonathon Sheffield <samsmug@gmail.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "l337 manager for redis"
 
 [dependencies]
-l337 = { path = ".." }
+l337 = { version = "0.4", path = ".." }
 futures = "0.3"
 tokio = "0.2"
-# This should be changed to the next version of redis-rs when a release is done.
-redis = { git = "https://github.com/mitsuhiko/redis-rs.git", branch = "master" }
+redis = "0.14.0"
 async-trait = "0.1.22"
 log = "0.4"
+
+[dev-dependencies]
+# Required for the #[tokio::test] macro
+tokio = { version = "0.2", features = ["rt-core", "macros"] }

@@ -66,6 +66,29 @@ where
     /// normal operation. This is an option so we can take the connection on
     /// drop, and push it back into the pool
     pub pool: Option<Pool<C>>,
+
+    /// If true, this connection will be returned to the pool when it is dropped.
+    /// Otherwise, it will be forgotten.
+    should_be_put_back: bool,
+}
+
+impl<C> Conn<C>
+where
+    C: ManageConnection,
+    C::Connection: Send,
+{
+    pub(crate) fn new(connection: Live<C::Connection>, pool: Pool<C>) -> Self {
+        Self {
+            conn: Some(connection),
+            pool: Some(pool),
+            should_be_put_back: true,
+        }
+    }
+
+    pub(crate) fn forget(mut self) {
+        self.should_be_put_back = false;
+        drop(self);
+    }
 }
 
 impl<C> Deref for Conn<C>
@@ -95,12 +118,14 @@ where
     C::Connection: Send,
 {
     fn drop(&mut self) {
+        if !self.should_be_put_back {
+            return;
+        }
+
         let conn = self.conn.take().unwrap();
         let pool = self.pool.take().unwrap();
 
-        tokio::spawn(async move {
-            pool.put_back(conn).await;
-        });
+        pool.put_back(conn);
     }
 }
 
@@ -115,16 +140,13 @@ mod tests {
     #[tokio::test]
     async fn conn_pushes_back_into_pool_after_drop() {
         let mngr = DummyManager::new();
-        let config = Config {
-            min_size: 2,
-            max_size: 2,
-        };
+        let config = Config::new().min_size(2).max_size(2);
 
         let pool = Pool::new(mngr, config).await.unwrap();
-        assert_eq!(pool.idle_conns().await, 2);
+        assert_eq!(pool.idle_conns(), 2);
 
         let conn = pool.connection().await.unwrap();
-        assert_eq!(pool.idle_conns().await, 1);
+        assert_eq!(pool.idle_conns(), 1);
 
         ::std::mem::drop(conn);
 
@@ -132,6 +154,6 @@ mod tests {
         // to wait for the future to finish.
         delay_for(Duration::from_secs(1)).await;
 
-        assert_eq!(pool.idle_conns().await, 2);
+        assert_eq!(pool.idle_conns(), 2);
     }
 }

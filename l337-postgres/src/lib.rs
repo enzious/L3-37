@@ -11,7 +11,11 @@ extern crate log;
 #[macro_use]
 extern crate async_trait;
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, prelude::*};
+use std::{
+    convert::{AsMut, AsRef},
+    ops::{Deref, DerefMut},
+};
 use tokio::spawn;
 use tokio_postgres::error::Error;
 use tokio_postgres::{
@@ -24,7 +28,47 @@ use std::fmt;
 pub struct AsyncConnection {
     pub client: Client,
     broken: bool,
-    receiver: oneshot::Receiver<bool>,
+    done_rx: oneshot::Receiver<()>,
+    drop_tx: Option<oneshot::Sender<()>>,
+}
+
+// Connections can be dropped when they report an error from is_valid, or return
+// true from has_broken. The channel is used here to ensure that the async
+// driver task spawned in PostgresConnectionManager::connect is ended.
+impl Drop for AsyncConnection {
+    fn drop(&mut self) {
+        // If the receiver is gone here, it means the task is already finished,
+        // and it's no problem.
+        if let Some(drop_tx) = self.drop_tx.take() {
+            let _ = drop_tx.send(());
+        }
+    }
+}
+
+impl Deref for AsyncConnection {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+impl DerefMut for AsyncConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
+    }
+}
+
+impl AsMut<Client> for AsyncConnection {
+    fn as_mut(&mut self) -> &mut Client {
+        &mut self.client
+    }
+}
+
+impl AsRef<Client> for AsyncConnection {
+    fn as_ref(&self) -> &Client {
+        &self.client
+    }
 }
 
 /// A `ManageConnection` for `tokio_postgres::Connection`s.
@@ -55,38 +99,55 @@ where
     T: 'static + MakeTlsConnect<Socket> + Clone + Send + Sync,
     T::Stream: Send + Sync,
     T::TlsConnect: Send,
-    <T::TlsConnect as TlsConnect<Socket>>::Future: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
     type Connection = AsyncConnection;
     type Error = Error;
 
     async fn connect(&self) -> Result<Self::Connection, l337::Error<Self::Error>> {
+        debug!("connect: open postgres connection");
         let (client, connection) = self
             .config
             .connect(self.make_tls_connect.clone())
             .await
             .map_err(|e| l337::Error::External(e))?;
 
-        let (sender, receiver) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let (drop_tx, drop_rx) = oneshot::channel();
         spawn(async move {
-            if let Err(_) = connection.await {
-                sender
-                    .send(true)
-                    .unwrap_or_else(|e| panic!("failed to send shutdown notice: {}", e));
+            debug!("connect: start connection future");
+            let connection = connection.fuse();
+            let drop_rx = drop_rx.fuse();
+
+            futures::pin_mut!(connection, drop_rx);
+
+            futures::select! {
+                result = connection => {
+                    if let Err(e) = result {
+                        warn!("future backing postgres future ended with an error: {}", e);
+                    }
+                }
+                _ = drop_rx => { }
             }
+
+            // If this fails to send, the connection object was already dropped and does not need to be notified
+            let _ = done_tx.send(());
+
+            info!("connect: connection future ended");
         });
 
+        debug!("connect: postgres connection established");
         Ok(AsyncConnection {
             broken: false,
             client,
-            receiver,
+            done_rx,
+            drop_tx: Some(drop_tx),
         })
     }
 
     async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), l337::Error<Self::Error>> {
         // If we can execute this without erroring, we're definitely still connected to the database
-        conn.client
-            .simple_query("")
+        conn.simple_query("")
             .await
             .map_err(|e| l337::Error::External(e))?;
 
@@ -98,10 +159,14 @@ where
             return true;
         }
 
+        if conn.client.is_closed() {
+            return true;
+        }
+
         // Use try_recv() as `has_broken` can be called via Drop and not have a
         // future Context to poll on.
         // https://docs.rs/futures/0.3.1/futures/channel/oneshot/struct.Receiver.html#method.try_recv
-        match conn.receiver.try_recv() {
+        match conn.done_rx.try_recv() {
             // If we get any message, the connection task stopped, which means this connection is
             // now dead
             Ok(Some(_)) => {
@@ -157,9 +222,9 @@ mod tests {
         let config: Config = Default::default();
         let pool = Pool::new(mngr, config).await.unwrap();
         let conn = pool.connection().await.unwrap();
-        let select = conn.client.prepare("SELECT 1::INT4").await.unwrap();
+        let select = conn.prepare("SELECT 1::INT4").await.unwrap();
 
-        let rows = conn.client.query(&select, &[]).await.unwrap();
+        let rows = conn.query(&select, &[]).await.unwrap();
 
         for row in rows {
             assert_eq!(1, row.get(0));
@@ -180,8 +245,8 @@ mod tests {
 
         let q1 = async {
             let conn = pool.connection().await.unwrap();
-            let select = conn.client.prepare("SELECT 1::INT4").await.unwrap();
-            let rows = conn.client.query(&select, &[]).await.unwrap();
+            let select = conn.prepare("SELECT 1::INT4").await.unwrap();
+            let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
                 assert_eq!(1, row.get(0));
@@ -194,8 +259,8 @@ mod tests {
 
         let q2 = async {
             let conn = pool.connection().await.unwrap();
-            let select = conn.client.prepare("SELECT 2::INT4").await.unwrap();
-            let rows = conn.client.query(&select, &[]).await.unwrap();
+            let select = conn.prepare("SELECT 2::INT4").await.unwrap();
+            let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
                 assert_eq!(2, row.get(0));
@@ -222,8 +287,8 @@ mod tests {
         let pool = Pool::new(mngr, config).await.unwrap();
         let q1 = async {
             let conn = pool.connection().await.unwrap();
-            let select = conn.client.prepare("SELECT 1::INT4").await.unwrap();
-            let rows = conn.client.query(&select, &[]).await.unwrap();
+            let select = conn.prepare("SELECT 1::INT4").await.unwrap();
+            let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
                 assert_eq!(1, row.get(0));
@@ -239,8 +304,8 @@ mod tests {
 
         let q2 = async {
             let conn = pool.connection().await.unwrap();
-            let select = conn.client.prepare("SELECT 2::INT4").await.unwrap();
-            let rows = conn.client.query(&select, &[]).await.unwrap();
+            let select = conn.prepare("SELECT 2::INT4").await.unwrap();
+            let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
                 assert_eq!(2, row.get(0));
@@ -249,8 +314,8 @@ mod tests {
 
         let q3 = async {
             let conn = pool.connection().await.unwrap();
-            let select = conn.client.prepare("SELECT 3::INT4").await.unwrap();
-            let rows = conn.client.query(&select, &[]).await.unwrap();
+            let select = conn.prepare("SELECT 3::INT4").await.unwrap();
+            let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
                 assert_eq!(3, row.get(0));
@@ -259,6 +324,6 @@ mod tests {
 
         futures::join!(q2, q3);
 
-        assert_eq!(pool.total_conns().await, 2);
+        assert_eq!(pool.total_conns(), 2);
     }
 }
