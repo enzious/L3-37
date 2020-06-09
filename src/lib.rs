@@ -56,6 +56,7 @@ extern crate async_trait;
 mod config;
 mod conn;
 mod error;
+mod extensions;
 mod inner;
 mod manage_connection;
 mod queue;
@@ -74,6 +75,7 @@ use crate::error::InternalError;
 pub use crate::config::Config;
 pub use conn::Conn;
 pub use error::Error;
+pub use extensions::Extensions;
 pub use manage_connection::ManageConnection;
 
 use inner::ConnectionPool;

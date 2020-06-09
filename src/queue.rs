@@ -45,12 +45,15 @@ use std::time::Instant;
 
 use crossbeam_queue::{ArrayQueue, PushError};
 
+use crate::extensions::Extensions;
+
 // Almost all of this file is directly from c3po: https://github.com/withoutboats/c3po/blob/08a6fde00c6506bacfe6eebe621520ee54b418bb/src/queue.rs
 
 /// A connection, carrying with it a record of how long it has been live.
 #[derive(Debug)]
 pub struct Live<T: Send> {
     pub conn: T,
+    pub extensions: Option<Extensions>,
     pub live_since: Instant,
 }
 
@@ -58,6 +61,7 @@ impl<T: Send> Live<T> {
     pub fn new(conn: T) -> Live<T> {
         Live {
             conn,
+            extensions: Some(Extensions::default()),
             live_since: Instant::now(),
         }
     }
@@ -82,15 +86,15 @@ impl<T: Send> Idle<T> {
 /// A queue of idle connections which counts how many connections exist total
 /// (including those which are not in the queue.)
 #[derive(Debug)]
-pub struct Queue<C: Send> {
-    idle: ArrayQueue<Idle<C>>,
+pub struct Queue<T: Send> {
+    idle: ArrayQueue<Idle<T>>,
     total_count: AtomicUsize,
     idle_push_error_count: AtomicUsize,
 }
 
-impl<C: Send> Queue<C> {
+impl<T: Send> Queue<T> {
     /// Construct an empty queue with a certain capacity
-    pub(crate) fn new(capacity: usize) -> Queue<C> {
+    pub(crate) fn new(capacity: usize) -> Queue<T> {
         Queue {
             idle: ArrayQueue::new(capacity),
             total_count: AtomicUsize::new(0),
@@ -117,7 +121,7 @@ impl<C: Send> Queue<C> {
 
     /// Push a new connection into the queue (this will increment
     /// the total connection count).
-    pub(crate) fn new_conn(&self, conn: Live<C>) {
+    pub(crate) fn new_conn(&self, conn: Live<T>) {
         if self.store(conn).is_ok() {
             self.increment();
         }
@@ -125,7 +129,7 @@ impl<C: Send> Queue<C> {
 
     /// Store a connection which has already been counted in the queue
     /// (this will NOT increment the total connection count).
-    pub(crate) fn store(&self, conn: Live<C>) -> Result<(), PushError<Idle<C>>> {
+    pub(crate) fn store(&self, conn: Live<T>) -> Result<(), PushError<Idle<T>>> {
         if let Err(err) = self.idle.push(Idle::new(conn)) {
             self.idle_push_error_count.fetch_add(1, Ordering::Relaxed);
             return Err(err);
@@ -134,7 +138,7 @@ impl<C: Send> Queue<C> {
     }
 
     /// Get the longest-idle connection from the queue.
-    pub(crate) fn get(&self) -> Option<Live<C>> {
+    pub(crate) fn get(&self) -> Option<Live<T>> {
         self.idle.pop().ok().map(|Idle { conn, .. }| conn)
     }
 
@@ -188,7 +192,7 @@ mod tests {
 
     #[test]
     fn new_conn() {
-        let conns = Queue::new(1);
+        let conns = Queue::<()>::new(1);
         assert_eq!(conns.idle(), 0);
         assert_eq!(conns.total(), 0);
         conns.new_conn(Live::new(()));
@@ -209,7 +213,7 @@ mod tests {
 
     #[test]
     fn get() {
-        let conns = Queue::new(1);
+        let conns = Queue::<()>::new(1);
         assert!(conns.get().is_none());
         conns.new_conn(Live::new(()));
         assert!(conns.get().is_some());

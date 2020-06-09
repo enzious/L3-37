@@ -227,7 +227,7 @@ mod tests {
         let rows = conn.query(&select, &[]).await.unwrap();
 
         for row in rows {
-            assert_eq!(1, row.get(0));
+            assert_eq!(1, row.get::<_, i32>(0));
         }
     }
 
@@ -249,7 +249,7 @@ mod tests {
             let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
-                assert_eq!(1, row.get(0));
+                assert_eq!(1i32, row.get::<_, i32>(0));
             }
 
             delay_for(Duration::from_secs(5)).await;
@@ -263,7 +263,7 @@ mod tests {
             let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
-                assert_eq!(2, row.get(0));
+                assert_eq!(2i32, row.get::<_, i32>(0));
             }
 
             delay_for(Duration::from_secs(5)).await;
@@ -291,7 +291,7 @@ mod tests {
             let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
-                assert_eq!(1, row.get(0));
+                assert_eq!(1i32, row.get::<_, i32>(0));
             }
         };
 
@@ -308,7 +308,7 @@ mod tests {
             let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
-                assert_eq!(2, row.get(0));
+                assert_eq!(2i32, row.get::<_, i32>(0));
             }
         };
 
@@ -318,7 +318,7 @@ mod tests {
             let rows = conn.query(&select, &[]).await.unwrap();
 
             for row in rows {
-                assert_eq!(3, row.get(0));
+                assert_eq!(3i32, row.get::<_, i32>(0));
             }
         };
 

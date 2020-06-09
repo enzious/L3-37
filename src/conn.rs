@@ -43,7 +43,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::manage_connection::ManageConnection;
 use crate::queue::Live;
-use crate::Pool;
+use crate::{extensions::Extensions, Pool};
 
 // From c3po, https://github.com/withoutboats/c3po/blob/08a6fde00c6506bacfe6eebe621520ee54b418bb/src/lib.rs#L40
 
@@ -88,6 +88,26 @@ where
     pub(crate) fn forget(mut self) {
         self.should_be_put_back = false;
         drop(self);
+    }
+
+    /// Take the extensions off of the live connection.
+    pub fn take_extensions(&mut self) -> Option<Extensions> {
+        if let Some(ref mut live) = self.conn {
+            live.extensions.take()
+        } else {
+            None
+        }
+    }
+
+    /// Replace the extensions on a live connection.
+    pub fn put_extensions(&mut self, extensions: Option<Extensions>) -> Option<Extensions> {
+        if let Some(ref mut live) = self.conn {
+            let out = live.extensions.take();
+            live.extensions = extensions;
+            out
+        } else {
+            None
+        }
     }
 }
 
