@@ -1,6 +1,6 @@
 [package]
 name = "l337-postgres"
-version = "0.4.1"
+version = "0.4.2"
 authors = ["Jonathon Sheffield <samsmug@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -9,10 +9,10 @@ description = "l337 manager for tokio-postgres"
 [dependencies]
 l337 = { version = "0.4", path = ".." }
 futures = "0.3"
-tokio = "0.2"
-tokio-postgres = { git = "https://github.com/sfackler/rust-postgres", rev = "386ab5ad6e724e735afdc77838fac90118e0e177", features = [ "with-serde_json-1", "with-chrono-0_4" ] }
+tokio = "1.4.0"
+tokio-postgres = { version = "0.7.1", features = ["runtime"] }
 log = "0.4.8"
 async-trait = "0.1.22"
 
 [dev-dependencies]
-tokio = { version = "0.2", features = ["macros"] }
+tokio = { version = "1.4.0", features = ["macros"] }

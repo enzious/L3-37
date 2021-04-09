@@ -1,6 +1,6 @@
 [package]
 name = "l337"
-version = "0.4.5"
+version = "0.4.6"
 authors = ["Jonathon Sheffield <samsmug@gmail.com>",
            "Joe Wilm <joe@jwilm.com>",
            "keith Noguchi <keith@onesignal.com>"]
@@ -10,7 +10,7 @@ edition = "2018"
 
 [dependencies]
 futures = "0.3"
-tokio = { version = "0.2.11", features = ["rt-core", "time", "macros"] }
+tokio = { version = "1.4.0", features = ["time", "macros", "rt"] }
 crossbeam-queue = "0.2"
 failure = "0.1.2"
 fxhash = "0.2.1"

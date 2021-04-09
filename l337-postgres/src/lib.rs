@@ -208,7 +208,8 @@ mod tests {
     use super::*;
     use l337::{Config, Pool};
     use std::time::Duration;
-    use tokio::time::delay_for;
+    use tokio::time::sleep_until;
+    use tokio::time::Instant;
 
     #[tokio::test]
     async fn it_works() {
@@ -252,7 +253,7 @@ mod tests {
                 assert_eq!(1i32, row.get::<_, i32>(0));
             }
 
-            delay_for(Duration::from_secs(5)).await;
+            sleep_until(Instant::now() + Duration::from_secs(5)).await;
 
             conn
         };
@@ -266,7 +267,7 @@ mod tests {
                 assert_eq!(2i32, row.get::<_, i32>(0));
             }
 
-            delay_for(Duration::from_secs(5)).await;
+            sleep_until(Instant::now() + Duration::from_secs(5)).await;
 
             conn
         };
@@ -300,7 +301,7 @@ mod tests {
         // This delay is required to ensure that the connection is returned to
         // the pool after Drop runs. Because Drop spawns a future that returns
         // the connection to the pool.
-        delay_for(Duration::from_millis(500)).await;
+        sleep_until(Instant::now() + Duration::from_millis(500)).await;
 
         let q2 = async {
             let conn = pool.connection().await.unwrap();
